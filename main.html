@@ -1,0 +1,1157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>RXPGuides Re-encryptor</title>
+
+<style>
+    * {
+        box-sizing: border-box;
+    }
+
+    body {
+        margin: 0;
+        padding: 40px 20px;
+        background: #111827;
+        color: #f3f4f6;
+        font-family:
+            -apple-system,
+            BlinkMacSystemFont,
+            "Segoe UI",
+            sans-serif;
+    }
+
+    .container {
+        max-width: 700px;
+        margin: auto;
+    }
+
+    h1 {
+        margin-bottom: 8px;
+    }
+
+    .subtitle {
+        color: #9ca3af;
+        margin-bottom: 30px;
+    }
+
+    .card {
+        background: #1f2937;
+        border: 1px solid #374151;
+        border-radius: 12px;
+        padding: 24px;
+        margin-bottom: 20px;
+    }
+
+    label {
+        display: block;
+        margin-bottom: 8px;
+        font-weight: 600;
+    }
+
+    input[type="file"],
+    input[type="text"] {
+        width: 100%;
+        padding: 12px;
+        background: #111827;
+        color: #f3f4f6;
+        border: 1px solid #4b5563;
+        border-radius: 8px;
+        margin-bottom: 20px;
+    }
+
+    button {
+        width: 100%;
+        padding: 13px;
+        border: none;
+        border-radius: 8px;
+        background: #2563eb;
+        color: white;
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+    }
+
+    button:hover {
+        background: #1d4ed8;
+    }
+
+    button:disabled {
+        background: #4b5563;
+        cursor: not-allowed;
+    }
+
+    .info {
+        background: #111827;
+        border-radius: 8px;
+        padding: 15px;
+        margin-bottom: 5px;
+    }
+
+    .info-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 5px 0;
+    }
+
+    .info-label {
+        color: #9ca3af;
+    }
+
+    .status {
+        margin-top: 20px;
+        padding: 15px;
+        border-radius: 8px;
+        display: none;
+        white-space: pre-wrap;
+    }
+
+    .status.success {
+        display: block;
+        background: #064e3b;
+        border: 1px solid #059669;
+    }
+
+    .status.error {
+        display: block;
+        background: #450a0a;
+        border: 1px solid #dc2626;
+    }
+
+    .status.working {
+        display: block;
+        background: #1e3a8a;
+        border: 1px solid #2563eb;
+    }
+
+    .hidden {
+        display: none;
+    }
+
+    .warning {
+        color: #fbbf24;
+        font-size: 14px;
+        margin-top: -10px;
+        margin-bottom: 5px;
+    }
+
+    .detected {
+        color: #60a5fa;
+        font-weight: 600;
+    }
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+    <h1>RXPGuides Re-encryptor</h1>
+
+    <div class="subtitle">
+        Re-encrypt an RXPGuides export for another BattleTag.
+    </div>
+
+
+    <!-- FILE -->
+
+    <div class="card">
+
+        <label for="fileInput">
+            1. Select input.txt
+        </label>
+
+        <input
+            type="file"
+            id="fileInput"
+            accept=".txt"
+        >
+
+        <div id="fileInfo" class="info hidden">
+
+            <div class="info-row">
+                <span class="info-label">File</span>
+                <span id="fileName">-</span>
+            </div>
+
+            <div class="info-row">
+                <span class="info-label">Detected version</span>
+                <span id="version" class="detected">-</span>
+            </div>
+
+        </div>
+
+    </div>
+
+
+    <!-- ORIGINAL BATTLETAG -->
+
+    <div class="card">
+
+        <label for="originalBattleTag">
+            2. Original BattleTag
+        </label>
+
+        <input
+            type="text"
+            id="originalBattleTag"
+            placeholder="OldName#1234"
+            autocomplete="off"
+        >
+
+        <div class="warning">
+            Enter the BattleTag that was used to create input.txt.
+        </div>
+
+    </div>
+
+
+    <!-- NEW BATTLETAG -->
+
+    <div class="card">
+
+        <label for="newBattleTag">
+            3. New BattleTag
+        </label>
+
+        <input
+            type="text"
+            id="newBattleTag"
+            placeholder="NewName#5678"
+            autocomplete="off"
+        >
+
+        <button id="encryptButton" disabled>
+            Re-encrypt & Download output.txt
+        </button>
+
+    </div>
+
+
+    <div id="status" class="status"></div>
+
+</div>
+
+
+<script>
+
+/* ============================================================
+   GLOBAL STATE
+   ============================================================ */
+
+let inputText = null;
+let detectedVersion = 40000;
+
+
+/* ============================================================
+   Base64
+   ============================================================ */
+
+function base64ToUint8(b64) {
+
+    const binary = atob(b64);
+
+    const bytes = new Uint8Array(binary.length);
+
+    for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+
+    return bytes;
+}
+
+
+function uint8ToBase64(bytes) {
+
+    let binary = "";
+
+    /*
+     * Process in chunks so large guides don't cause
+     * a "Maximum call stack size exceeded" error.
+     */
+    const chunkSize = 0x8000;
+
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+
+        const chunk =
+            bytes.subarray(
+                i,
+                Math.min(i + chunkSize, bytes.length)
+            );
+
+        binary += String.fromCharCode(...chunk);
+    }
+
+    return btoa(binary);
+}
+
+
+/* ============================================================
+   BattleTag -> 16-byte key
+   ============================================================ */
+
+function deriveKey(battletag) {
+
+    const lower =
+        battletag.toLowerCase();
+
+    let bytes =
+        new TextEncoder().encode(lower);
+
+
+    /*
+     * The original implementation keeps
+     * the final 16 UTF-8 bytes.
+     */
+    if (bytes.length > 16) {
+
+        bytes =
+            bytes.slice(
+                bytes.length - 16
+            );
+    }
+
+
+    const k =
+        16 - bytes.length;
+
+
+    const buffer =
+        new Uint8Array(16);
+
+
+    for (let i = 0; i < 16; i++) {
+
+        const j =
+            (i - k) & 0xf;
+
+
+        if (j < bytes.length) {
+
+            buffer[i] =
+                bytes[j];
+        }
+    }
+
+
+    for (let i = 0; i < 16; i++) {
+
+        buffer[(-i) & 0xf] =
+            buffer[(15 - i) & 0xf]
+            ^
+            buffer[(13 - i) & 0xf]
+            ^
+            buffer[(12 - i) & 0xf]
+            ^
+            buffer[(10 - i) & 0xf];
+    }
+
+
+    return buffer;
+}
+
+
+/* ============================================================
+   RC4 KSA
+   ============================================================ */
+
+function rc4Ksa(key16) {
+
+    const S =
+        new Uint8Array(256);
+
+
+    for (let i = 0; i < 256; i++) {
+
+        S[i] = i;
+    }
+
+
+    let j = 0;
+
+
+    for (let i = 0; i < 256; i++) {
+
+        j =
+            (j + S[i] + key16[i & 0xf])
+            & 0xff;
+
+
+        const tmp = S[i];
+
+        S[i] = S[j];
+        S[j] = tmp;
+    }
+
+
+    return S;
+}
+
+
+/* ============================================================
+   RC4
+   ============================================================ */
+
+function rc4Crypt(sBox, data) {
+
+    const S =
+        new Uint8Array(sBox);
+
+
+    let i = 0;
+    let j = 0;
+
+
+    const output =
+        new Uint8Array(data.length);
+
+
+    for (let k = 0; k < data.length; k++) {
+
+        i =
+            (i + 1) & 0xff;
+
+
+        j =
+            (j + S[i]) & 0xff;
+
+
+        const tmp = S[i];
+
+        S[i] = S[j];
+        S[j] = tmp;
+
+
+        output[k] =
+            data[k]
+            ^
+            S[(S[i] + S[j]) & 0xff];
+    }
+
+
+    return output;
+}
+
+
+/* ============================================================
+   Adler-32
+   ============================================================ */
+
+function adler32(data) {
+
+    let a = 1;
+    let b = 0;
+
+    let i = 0;
+
+
+    /*
+     * This deliberately follows the
+     * original TypeScript implementation.
+     */
+    while (i <= data.length - 16) {
+
+        const x0  = data[i];
+        const x1  = data[i + 1];
+        const x2  = data[i + 2];
+        const x3  = data[i + 3];
+
+        const x4  = data[i + 4];
+        const x5  = data[i + 5];
+        const x6  = data[i + 6];
+        const x7  = data[i + 7];
+
+        const x8  = data[i + 8];
+        const x9  = data[i + 9];
+        const x10 = data[i + 10];
+        const x11 = data[i + 11];
+
+        const x12 = data[i + 12];
+        const x13 = data[i + 13];
+        const x14 = data[i + 14];
+        const x15 = data[i + 15];
+
+
+        b = (
+            b +
+            16 * a +
+            16 * x0 +
+            15 * x1 +
+            14 * x2 +
+            13 * x3 +
+            12 * x4 +
+            11 * x5 +
+            10 * x6 +
+            9 * x7 +
+            8 * x8 +
+            7 * x9 +
+            6 * x10 +
+            5 * x11 +
+            4 * x12 +
+            3 * x13 +
+            2 * x14 +
+            x15
+        ) % 65521;
+
+
+        a = (
+            a +
+            x0 +
+            x1 +
+            x2 +
+            x3 +
+            x4 +
+            x5 +
+            x6 +
+            x7 +
+            x8 +
+            x9 +
+            x10 +
+            x11 +
+            x12 +
+            x13 +
+            x14 +
+            x15
+        ) % 65521;
+
+
+        i += 16;
+    }
+
+
+    while (i < data.length) {
+
+        a =
+            (a + data[i])
+            % 65521;
+
+
+        b =
+            (b + a)
+            % 65521;
+
+
+        i++;
+    }
+
+
+    return (
+        (b * 65536 + a)
+        >>> 0
+    );
+}
+
+
+/* ============================================================
+   Browser DEFLATE helpers
+   ============================================================ */
+
+/*
+ * The original TypeScript uses:
+ *
+ *     pako.inflate(...)
+ *
+ * and
+ *
+ *     pako.deflate(...)
+ *
+ * Both use the zlib/DEFLATE format.
+ *
+ * Modern Chrome, Edge, Firefox and Safari provide the
+ * equivalent format through DecompressionStream and
+ * CompressionStream.
+ */
+
+
+async function inflate(data) {
+
+    if (!("DecompressionStream" in window)) {
+
+        throw new Error(
+            "This browser does not support " +
+            "DecompressionStream. Please use a recent " +
+            "Chrome, Edge, Firefox or Safari."
+        );
+    }
+
+
+    const stream =
+        new Blob([data])
+            .stream()
+            .pipeThrough(
+                new DecompressionStream("deflate")
+            );
+
+
+    const response =
+        new Response(stream);
+
+
+    const buffer =
+        await response.arrayBuffer();
+
+
+    return new Uint8Array(buffer);
+}
+
+
+async function deflate(data) {
+
+    if (!("CompressionStream" in window)) {
+
+        throw new Error(
+            "This browser does not support " +
+            "CompressionStream. Please use a recent " +
+            "Chrome, Edge, Firefox or Safari."
+        );
+    }
+
+
+    const stream =
+        new Blob([data])
+            .stream()
+            .pipeThrough(
+                new CompressionStream("deflate")
+            );
+
+
+    const response =
+        new Response(stream);
+
+
+    const buffer =
+        await response.arrayBuffer();
+
+
+    return new Uint8Array(buffer);
+}
+
+
+/* ============================================================
+   Decrypt
+   ============================================================ */
+
+async function decryptGuideFile(
+    raw,
+    battletag
+) {
+
+    /*
+     * Read version from:
+     *
+     * ...%|40000
+     */
+    const versionMatch =
+        raw.match(/\|(\d+)$/);
+
+
+    const version =
+        versionMatch
+            ? parseInt(versionMatch[1], 10)
+            : 40000;
+
+
+    /*
+     * Derive RC4 key.
+     */
+    const key16 =
+        deriveKey(battletag);
+
+
+    const S =
+        rc4Ksa(key16);
+
+
+    /*
+     * Find encrypted chunks.
+     */
+    const chunks = [
+        ...raw.matchAll(
+            /(-?\d+)(\D)([A-Za-z0-9+/=]+)%/g
+        )
+    ];
+
+
+    const allGuides = [];
+
+
+    for (const match of chunks) {
+
+        const mode =
+            match[2];
+
+        const content =
+            match[3];
+
+
+        /*
+         * ':' indicates encrypted data.
+         */
+        if (mode !== ":") {
+            continue;
+        }
+
+
+        const decoded =
+            base64ToUint8(content);
+
+
+        /*
+         * RC4 decrypt.
+         */
+        const decrypted =
+            rc4Crypt(
+                S,
+                decoded
+            );
+
+
+        /*
+         * Inflate/decompress.
+         */
+        const decompressed =
+            await inflate(decrypted);
+
+
+        const text =
+            new TextDecoder(
+                "utf-8",
+                { fatal: false }
+            ).decode(decompressed);
+
+
+        const guides =
+            text
+                .split("\x00")
+                .filter(
+                    g => g.trim()
+                );
+
+
+        allGuides.push(
+            ...guides
+        );
+    }
+
+
+    if (allGuides.length === 0) {
+
+        throw new Error(
+            "No guides were decrypted. " +
+            "The original BattleTag may be incorrect."
+        );
+    }
+
+
+    return {
+        plaintext:
+            allGuides.join("\x00"),
+
+        version:
+            version,
+
+        guideCount:
+            allGuides.length
+    };
+}
+
+
+/* ============================================================
+   Encrypt
+   ============================================================ */
+
+async function encryptForBattletag(
+    plaintext,
+    battletag,
+    version
+) {
+
+    const data =
+        new TextEncoder()
+            .encode(plaintext);
+
+
+    /*
+     * Same calculation as the original:
+     *
+     * new TextDecoder()
+     *   .decode(data)
+     *   .split("\x00")
+     *   .length
+     */
+    const nGuides =
+        new TextDecoder()
+            .decode(data)
+            .split("\x00")
+            .length;
+
+
+    /*
+     * Adler-32.
+     */
+    const checksum =
+        adler32(data);
+
+
+    /*
+     * Equivalent browser DEFLATE operation.
+     */
+    const compressed =
+        await deflate(data);
+
+
+    /*
+     * Generate new BattleTag key.
+     */
+    const key16 =
+        deriveKey(battletag);
+
+
+    const S =
+        rc4Ksa(key16);
+
+
+    /*
+     * RC4 encrypt.
+     */
+    const encrypted =
+        rc4Crypt(
+            S,
+            compressed
+        );
+
+
+    /*
+     * Base64.
+     */
+    const encoded =
+        uint8ToBase64(
+            encrypted
+        );
+
+
+    /*
+     * RXPGuides format.
+     */
+    return (
+        `${nGuides}|` +
+        `${checksum}:` +
+        `${encoded}%|` +
+        `${version}`
+    );
+}
+
+
+/* ============================================================
+   File selection
+   ============================================================ */
+
+document
+    .getElementById("fileInput")
+    .addEventListener(
+        "change",
+        async function () {
+
+            const file =
+                this.files[0];
+
+
+            if (!file) {
+                return;
+            }
+
+
+            try {
+
+                inputText =
+                    await file.text();
+
+
+                /*
+                 * Extract version.
+                 */
+                const versionMatch =
+                    inputText.match(
+                        /\|(\d+)$/
+                    );
+
+
+                detectedVersion =
+                    versionMatch
+                        ? parseInt(
+                            versionMatch[1],
+                            10
+                        )
+                        : 40000;
+
+
+                document
+                    .getElementById("fileName")
+                    .textContent =
+                        file.name;
+
+
+                document
+                    .getElementById("version")
+                    .textContent =
+                        detectedVersion;
+
+
+                document
+                    .getElementById("fileInfo")
+                    .classList
+                    .remove("hidden");
+
+
+                updateButton();
+
+
+                showStatus(
+                    "input.txt loaded successfully.",
+                    "success"
+                );
+
+            } catch (error) {
+
+                showStatus(
+                    "Could not read the file.\n\n" +
+                    error.message,
+                    "error"
+                );
+            }
+        }
+    );
+
+
+/* ============================================================
+   Inputs
+   ============================================================ */
+
+document
+    .getElementById("originalBattleTag")
+    .addEventListener(
+        "input",
+        updateButton
+    );
+
+
+document
+    .getElementById("newBattleTag")
+    .addEventListener(
+        "input",
+        updateButton
+    );
+
+
+function updateButton() {
+
+    const original =
+        document
+            .getElementById(
+                "originalBattleTag"
+            )
+            .value
+            .trim();
+
+
+    const newTag =
+        document
+            .getElementById(
+                "newBattleTag"
+            )
+            .value
+            .trim();
+
+
+    document
+        .getElementById(
+            "encryptButton"
+        )
+        .disabled =
+            !inputText ||
+            !original ||
+            !newTag;
+}
+
+
+/* ============================================================
+   Re-encrypt
+   ============================================================ */
+
+document
+    .getElementById("encryptButton")
+    .addEventListener(
+        "click",
+        async function () {
+
+            const originalBattleTag =
+                document
+                    .getElementById(
+                        "originalBattleTag"
+                    )
+                    .value
+                    .trim();
+
+
+            const newBattleTag =
+                document
+                    .getElementById(
+                        "newBattleTag"
+                    )
+                    .value
+                    .trim();
+
+
+            try {
+
+                showStatus(
+                    "Decrypting input.txt...",
+                    "working"
+                );
+
+
+                /*
+                 * Decrypt using the OLD BattleTag.
+                 */
+                const result =
+                    await decryptGuideFile(
+                        inputText,
+                        originalBattleTag
+                    );
+
+
+                showStatus(
+                    "Decrypted " +
+                    result.guideCount +
+                    " guide(s).\n\n" +
+                    "Re-encrypting for " +
+                    newBattleTag +
+                    "...",
+                    "working"
+                );
+
+
+                /*
+                 * Encrypt using the NEW BattleTag.
+                 */
+                const output =
+                    await encryptForBattletag(
+                        result.plaintext,
+                        newBattleTag,
+                        result.version
+                    );
+
+
+                /*
+                 * Create output.txt.
+                 */
+                const blob =
+                    new Blob(
+                        [output],
+                        {
+                            type:
+                                "text/plain;charset=utf-8"
+                        }
+                    );
+
+
+                const url =
+                    URL.createObjectURL(blob);
+
+
+                const link =
+                    document.createElement("a");
+
+
+                link.href = url;
+                link.download = "output.txt";
+
+
+                document
+                    .body
+                    .appendChild(link);
+
+
+                link.click();
+
+
+                link.remove();
+
+
+                URL.revokeObjectURL(url);
+
+
+                showStatus(
+                    "COMPLETE\n\n" +
+
+                    "Original BattleTag: " +
+                    originalBattleTag +
+                    "\n" +
+
+                    "New BattleTag: " +
+                    newBattleTag +
+                    "\n" +
+
+                    "Version: " +
+                    result.version +
+                    "\n" +
+
+                    "Guides: " +
+                    result.guideCount +
+                    "\n\n" +
+
+                    "output.txt has been downloaded.",
+                    "success"
+                );
+
+            } catch (error) {
+
+                console.error(error);
+
+
+                showStatus(
+                    "ERROR\n\n" +
+
+                    "The file could not be decrypted.\n\n" +
+
+                    "Check that the Original BattleTag " +
+                    "is correct.\n\n" +
+
+                    "Details:\n" +
+                    error.message,
+                    "error"
+                );
+            }
+        }
+    );
+
+
+/* ============================================================
+   Status
+   ============================================================ */
+
+function showStatus(
+    message,
+    type
+) {
+
+    const status =
+        document.getElementById(
+            "status"
+        );
+
+
+    status.textContent =
+        message;
+
+
+    status.className =
+        "status " + type;
+}
+
+</script>
+
+</body>
+</html>
