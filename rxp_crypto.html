@@ -1,0 +1,448 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RXPGuides BattleTag Finder</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #10131a;
+    --panel: #1b202b;
+    --border: #30394a;
+    --text: #edf1f8;
+    --muted: #a2aec1;
+    --accent: #79a8ff;
+    --green: #72dfad;
+    --red: #ff8d98;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.55 system-ui, -apple-system, sans-serif;
+  }
+
+  main {
+    width: min(780px, 100%);
+    margin: 0 auto;
+    padding: 28px 18px 50px;
+  }
+
+  h1 { font-size: 27px; margin: 0 0 6px; }
+  h2 { font-size: 17px; margin: 0 0 14px; }
+  p { margin: 7px 0 12px; }
+  .muted { color: var(--muted); }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 13px;
+    padding: 20px;
+    margin-top: 18px;
+  }
+
+  label {
+    display: block;
+    font-weight: 650;
+    margin: 14px 0 6px;
+  }
+
+  input[type="text"], textarea, input[type="file"] {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #111620;
+    color: var(--text);
+    padding: 11px;
+    font: inherit;
+  }
+
+  textarea {
+    min-height: 130px;
+    resize: vertical;
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  }
+
+  button, .download {
+    display: inline-block;
+    border: 0;
+    border-radius: 8px;
+    background: var(--accent);
+    color: #101827;
+    padding: 11px 15px;
+    font: inherit;
+    font-weight: 750;
+    cursor: pointer;
+    text-decoration: none;
+  }
+
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .secondary { background: #30394a; color: var(--text); }
+  .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+  .status { margin-top: 14px; overflow-wrap: anywhere; }
+  .success { color: var(--green); }
+  .error { color: var(--red); }
+  .match {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    margin-top: 8px;
+    overflow-wrap: anywhere;
+  }
+  .warning {
+    border-left: 3px solid #e7b85c;
+    padding: 10px 12px;
+    background: #29251c;
+    color: #f1dcae;
+    border-radius: 4px;
+    font-size: 13px;
+  }
+  progress { width: 100%; height: 8px; margin-top: 12px; }
+  footer { margin-top: 20px; font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>RXPGuides BattleTag Finder</h1>
+  <p class="muted">Offline tool · No libraries · No uploads</p>
+
+  <div class="warning">
+    This page uses the provisional algorithm from the example Python
+    code, not a verified implementation of the repository's format.
+    A failed search does not mean the BattleTag cannot be recovered.
+  </div>
+
+  <section class="panel">
+    <h2>1. Load the encrypted export</h2>
+    <label for="file">Export file</label>
+    <input id="file" type="file" accept=".txt,.rxp,.json,*/*">
+    <label for="raw">Or paste the export here</label>
+    <textarea id="raw" placeholder="Paste the encrypted RXPGuides export..."></textarea>
+  </section>
+
+  <section class="panel">
+    <h2>2. Candidate BattleTags</h2>
+    <p class="muted">
+      Enter possible original BattleTags, one per line.
+      The page tests only the candidates you provide.
+    </p>
+    <label for="candidates">Candidate list</label>
+    <textarea id="candidates" placeholder="PlayerName#1234&#10;AnotherName#5678"></textarea>
+    <div class="actions">
+      <button id="search">Find BattleTags</button>
+      <button id="clear" class="secondary">Clear</button>
+    </div>
+    <progress id="progress" max="1" value="0" hidden></progress>
+    <div id="status" class="status" role="status" aria-live="polite"></div>
+    <div id="matches"></div>
+  </section>
+
+  <section class="panel">
+    <h2>3. Re-encrypt the export</h2>
+    <p class="muted">
+      Available after a candidate passes the checksum test.
+    </p>
+    <label for="newTag">Destination BattleTag</label>
+    <input id="newTag" type="text" placeholder="NewName#1234">
+    <div class="actions">
+      <button id="convert" disabled>Re-encrypt and download</button>
+    </div>
+    <div id="outputStatus" class="status" role="status"></div>
+  </section>
+
+  <footer>
+    Everything runs in this browser tab. No network requests are made.
+    Closing or refreshing the tab clears the working data.
+  </footer>
+</main>
+
+<script>
+"use strict";
+
+const $ = id => document.getElementById(id);
+let found = [];
+
+function deriveKey(tag) {
+  const data = new TextEncoder().encode(tag.toLowerCase());
+  const input = data.length > 16 ? data.slice(data.length - 16) : data;
+  const buffer = new Uint8Array(16);
+  const offset = 16 - input.length;
+
+  for (let i = 0; i < 16; i++) {
+    const j = (i - offset) & 15;
+    if (j < input.length) buffer[i] = input[j];
+  }
+
+  for (let i = 0; i < 16; i++) {
+    buffer[(-i) & 15] =
+      buffer[(15 - i) & 15] ^
+      buffer[(13 - i) & 15] ^
+      buffer[(12 - i) & 15] ^
+      buffer[(10 - i) & 15];
+  }
+
+  return buffer;
+}
+
+function rc4Init(key) {
+  const s = Uint8Array.from({ length: 256 }, (_, i) => i);
+  let j = 0;
+
+  for (let i = 0; i < 256; i++) {
+    j = (j + s[i] + key[i & 15]) & 255;
+    [s[i], s[j]] = [s[j], s[i]];
+  }
+
+  return s;
+}
+
+function rc4(state, data) {
+  const s = state.slice();
+  const out = new Uint8Array(data.length);
+  let i = 0, j = 0;
+
+  for (let k = 0; k < data.length; k++) {
+    i = (i + 1) & 255;
+    j = (j + s[i]) & 255;
+    [s[i], s[j]] = [s[j], s[i]];
+    out[k] = data[k] ^ s[(s[i] + s[j]) & 255];
+  }
+
+  return out;
+}
+
+function adler32(data) {
+  let a = 1, b = 0;
+  for (const byte of data) {
+    a = (a + byte) % 65521;
+    b = (b + a) % 65521;
+  }
+  return (b * 65536 + a) >>> 0;
+}
+
+function decodeBase64(value) {
+  const binary = atob(value);
+  return Uint8Array.from(binary, c => c.charCodeAt(0));
+}
+
+function encodeBase64(bytes) {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 8192) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+  }
+  return btoa(binary);
+}
+
+// Browser-native DecompressionStream; no external dependency.
+async function decompressZlib(data) {
+  if (!("DecompressionStream" in window)) {
+    throw new Error(
+      "This browser lacks DecompressionStream support. Use a recent browser."
+    );
+  }
+
+  const stream = new Blob([data])
+    .stream()
+    .pipeThrough(new DecompressionStream("deflate"));
+
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+async function compressZlib(data) {
+  if (!("CompressionStream" in window)) {
+    throw new Error(
+      "This browser lacks CompressionStream support. Use a recent browser."
+    );
+  }
+
+  const stream = new Blob([data])
+    .stream()
+    .pipeThrough(new CompressionStream("deflate"));
+
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+async function decryptCandidate(raw, tag) {
+  const match = raw.match(/\|(\d+):([A-Za-z0-9+/=]+)%\|(\d+)/);
+  if (!match) throw new Error("Unrecognized export format.");
+
+  const expected = Number(match[1]);
+  const encrypted = decodeBase64(match[2]);
+  const decrypted = rc4(rc4Init(deriveKey(tag)), encrypted);
+  const plaintext = await decompressZlib(decrypted);
+
+  if (adler32(plaintext) !== expected) {
+    throw new Error("Checksum mismatch.");
+  }
+
+  return {
+    tag,
+    plaintext,
+    version: Number(match[3])
+  };
+}
+
+async function encryptExport(plaintext, tag, version) {
+  const compressed = await compressZlib(plaintext);
+  const encrypted = rc4(rc4Init(deriveKey(tag)), compressed);
+  return `1|${adler32(plaintext)}:${encodeBase64(encrypted)}%|${version}`;
+}
+
+function showStatus(message, kind = "") {
+  $("status").textContent = message;
+  $("status").className = "status " + kind;
+}
+
+$("file").addEventListener("change", async event => {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  try {
+    $("raw").value = await file.text();
+    showStatus(`Loaded ${file.name}.`, "success");
+  } catch {
+    showStatus("Could not read that file.", "error");
+  }
+});
+
+$("clear").addEventListener("click", () => {
+  $("raw").value = "";
+  $("candidates").value = "";
+  $("newTag").value = "";
+  $("matches").replaceChildren();
+  $("outputStatus").textContent = "";
+  $("progress").hidden = true;
+  found = [];
+  $("convert").disabled = true;
+  showStatus("Cleared.");
+});
+
+$("search").addEventListener("click", async () => {
+  const raw = $("raw").value.trim();
+  const candidates = [...new Set(
+    $("candidates").value
+      .split(/\r?\n/)
+      .map(s => s.trim())
+      .filter(Boolean)
+  )];
+
+  found = [];
+  $("matches").replaceChildren();
+  $("convert").disabled = true;
+
+  if (!raw) {
+    showStatus("Load or paste an export first.", "error");
+    return;
+  }
+
+  if (!candidates.length) {
+    showStatus("Enter at least one candidate BattleTag.", "error");
+    return;
+  }
+
+  $("search").disabled = true;
+  $("progress").hidden = false;
+  $("progress").max = candidates.length;
+  $("progress").value = 0;
+
+  try {
+    for (let i = 0; i < candidates.length; i++) {
+      try {
+        found.push(await decryptCandidate(raw, candidates[i]));
+      } catch {
+        // A failed candidate is not a match.
+      }
+
+      $("progress").value = i + 1;
+      showStatus(`Checking ${i + 1} of ${candidates.length} candidates...`);
+
+      // Yield to the browser so progress can update.
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+
+    if (!found.length) {
+      showStatus(
+        "No matches found. Verify the candidates and encryption format.",
+        "error"
+      );
+      return;
+    }
+
+    showStatus(`Found ${found.length} matching candidate(s).`, "success");
+
+    found.forEach((item, index) => {
+      const div = document.createElement("div");
+      div.className = "match";
+
+      const label = document.createElement("label");
+      label.style.margin = "0";
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = "match";
+      radio.value = index;
+      radio.checked = index === 0;
+      radio.style.marginRight = "10px";
+
+      label.append(radio, document.createTextNode(item.tag));
+      div.append(label);
+      $("matches").append(div);
+    });
+
+    $("convert").disabled = false;
+  } catch (error) {
+    showStatus(error.message || "Search failed.", "error");
+  } finally {
+    $("search").disabled = false;
+  }
+});
+
+$("convert").addEventListener("click", async () => {
+  const selection = document.querySelector('input[name="match"]:checked');
+  const newTag = $("newTag").value.trim();
+
+  if (!selection || !newTag) {
+    $("outputStatus").textContent =
+      "Select a match and enter a destination BattleTag.";
+    return;
+  }
+
+  $("convert").disabled = true;
+
+  try {
+    const result = found[Number(selection.value)];
+    const output = await encryptExport(
+      result.plaintext,
+      newTag,
+      result.version
+    );
+
+    const blob = new Blob([output], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "output.txt";
+    link.textContent = "Download output.txt";
+    link.className = "download";
+
+    $("outputStatus").replaceChildren(
+      document.createTextNode("Output prepared. "),
+      link
+    );
+
+    link.addEventListener("click", () => {
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }, { once: true });
+  } catch (error) {
+    $("outputStatus").textContent =
+      error.message || "Could not create the export.";
+  } finally {
+    $("convert").disabled = false;
+  }
+});
+</script>
+</body>
+</html>
